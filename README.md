@@ -1,4 +1,4 @@
-## Static weebserver
+## Static webserver
 
 __Do NOT use in production!__
 
