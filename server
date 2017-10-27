@@ -1,0 +1,70 @@
+#!/usr/bin/php
+<?php
+declare(ticks = 1);
+
+define('HOST', '0.0.0.0');
+define('PORT', '8080');
+
+$parent = true;
+$children = [];
+
+pcntl_signal(SIGCLD, 'handleChild', true);
+function handleChild($signo) {
+    global $children;
+
+    while (($pid = pcntl_wait($status, WNOHANG)) > 0) {
+        unset($children[$pid]);
+    }
+}
+
+$socket = socket_create(AF_INET, SOCK_STREAM, SOL_TCP);
+socket_bind($socket, HOST, PORT);
+socket_listen($socket);
+echo 'Listening on http://'.HOST.':'.PORT."/\n";
+
+while ($parent) {
+    $client = socket_accept($socket);
+    $pid = pcntl_fork();
+
+    if ($pid === -1) {
+      // Failure
+      socket_close($client);
+
+    } else if ($pid === 0) {
+      // Child process
+      $parent = false;
+      $requestData = '';
+      while (strpos($requestData, "\r\n\r\n") == false) {
+          $requestData .= socket_read($client, 1024);
+      }
+
+      $requestArray = explode("\n", $requestData);
+      preg_match('/GET \/(.*) .*/', $requestArray[0], $matches);
+      $file = $matches[1] ?? null;
+      if ($file) {
+        $filename = __DIR__.'/files/'.$file;
+        if (file_exists($filename)) {
+          echo 'Serving '.$file."\n";
+          $fileParts = explode('.', $file);
+          switch(end($fileParts)){
+            case 'css':
+              $mimeType = 'text/css';
+            break;
+            default:
+              $mimeType = mime_content_type($filename);
+          }
+          socket_write($client, "HTTP/1.1 200 OK\r\nContent-Type: ".$mimeType."\r\nConnection: close\r\n\r\n".file_get_contents($filename));
+        }
+        else {
+            socket_write($client, "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n");
+        }
+      }
+      socket_close($client);
+    } else {
+      // Parent process
+      $children[$pid] = $pid;
+      socket_close($client);
+    }
+}
+socket_close($socket);
+exit(0);
